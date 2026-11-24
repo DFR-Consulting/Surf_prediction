@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prédicteur de surf</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; background: #0b2239; color: #eaf2f8; }
+  header { padding: 1.2rem 1.5rem; background: #0e3a5d; }
+  header h1 { margin: 0; font-size: 1.4rem; }
+  main { padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
+  .controles { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin-bottom: 1rem; }
+  label { display: block; font-size: 0.8rem; opacity: 0.8; margin-bottom: 0.25rem; }
+  select, button { font-size: 1rem; padding: 0.4rem 0.6rem; border-radius: 6px; border: 1px solid #3a6ea5; background: #12395c; color: inherit; }
+  button { cursor: pointer; background: #1d6fa5; border: none; font-weight: 600; }
+  button:hover { background: #2a86c4; }
+  #resume { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .carte { background: #12395c; border-radius: 8px; padding: 0.8rem 1.2rem; }
+  .carte .valeur { font-size: 1.3rem; font-weight: 700; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  th, td { padding: 0.35rem 0.5rem; text-align: right; border-bottom: 1px solid #1d4a73; white-space: nowrap; }
+  th:first-child, td:first-child, th:last-child, td:last-child { text-align: left; }
+  th { background: #0e3a5d; position: sticky; top: 0; }
+  tr.meilleure { background: #14532d; }
+  .badge { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-weight: 600; font-size: 0.78rem; }
+  .Excellent { background: #15803d; }
+  .Bon { background: #4d7c0f; }
+  .Moyen { background: #a16207; }
+  .Mauvais { background: #b91c1c; }
+  .Très { background: #7f1d1d; }
+  #erreur { color: #fca5a5; margin-bottom: 1rem; white-space: pre-wrap; }
+  footer { padding: 1rem 1.5rem; font-size: 0.78rem; opacity: 0.7; }
+  a { color: #7dd3fc; }
+</style>
+</head>
+<body>
+<header><h1>🌊 Prédicteur de qualité de surf</h1></header>
+<main>
+  <div class="controles">
+    <div><label for="spot">Spot</label><select id="spot"></select></div>
+    <div><label for="jours">Jours de prévision</label>
+      <select id="jours">
+        <option>1</option><option>2</option><option selected>3</option>
+        <option>4</option><option>5</option><option>6</option><option>7</option>
+      </select>
+    </div>
+    <button id="rafraichir">Rafraîchir</button>
+  </div>
+  <div id="erreur"></div>
+  <div id="resume"></div>
+  <table id="table">
+    <thead><tr>
+      <th>Heure</th><th>Vagues (m)</th><th>Période (s)</th><th>Dir. vagues</th><th>Houle (m)</th>
+      <th>Vent (km/h)</th><th>Rafales</th><th>Dir. vent</th><th>Air (°C)</th><th>Eau (°C)</th>
+      <th>Pression (hPa)</th><th>Score</th><th>Avis</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</main>
+<footer>Données : <a href="https://open-meteo.com/">Open-Meteo</a> (licence CC BY 4.0). Prévisions limitées à 7 jours, fuseau horaire du spot.</footer>
+<script>
+const selectSpot = document.getElementById('spot');
+const selectJours = document.getElementById('jours');
+
+function fmt(v, d = 1) { return v === null || v === undefined ? '—' : Number(v).toFixed(d); }
+function fmtDir(v) { return v === null || v === undefined ? '—' : Math.round(v) + '°'; }
+function fmtHeure(iso) {
+  const dt = new Date(iso);
+  return isNaN(dt) ? iso : dt.toLocaleString('fr-FR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}).replace(',', '');
+}
+
+async function chargerSpots() {
+  const r = await fetch('/api/spots');
+  const data = await r.json();
+  selectSpot.innerHTML = '';
+  for (const s of data.spots) {
+    const opt = document.createElement('option');
+    opt.value = s.cle; opt.textContent = s.nom;
+    selectSpot.appendChild(opt);
+  }
+}
+
+async function chargerPrevisions() {
+  document.getElementById('erreur').textContent = '';
+  const r = await fetch(`/api/previsions?spot=${encodeURIComponent(selectSpot.value)}&jours=${selectJours.value}`);
+  const data = await r.json();
+  if (!r.ok) { document.getElementById('erreur').textContent = data.erreur || 'Erreur inconnue'; return; }
+  const prev = data.previsions;
+  const tbody = document.querySelector('#table tbody');
+  tbody.innerHTML = '';
+  let meilleure = null;
+  for (const p of prev) {
+    if (!meilleure || p.score > meilleure.score) meilleure = p;
+    const tr = document.createElement('tr');
+    if (meilleure && p === meilleure && p.score >= 60) tr.className = 'meilleure';
+    const cellules = [
+      fmtHeure(p.horodate), fmt(p.hauteur_vagues_m), fmt(p.periode_vagues_s), fmtDir(p.direction_vagues_deg),
+      fmt(p.hauteur_houle_m), fmt(p.vent_vitesse_kmh), fmt(p.vent_rafales_kmh), fmtDir(p.vent_direction_deg),
+      fmt(p.temperature_air_c), fmt(p.temperature_eau_c), fmt(p.pression_hpa, 0),
+      Math.round(p.score),
+    ];
+    for (const c of cellules) { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); }
+    const tdAvis = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + p.avis.split(' ')[0];
+    badge.textContent = p.avis;
+    tdAvis.appendChild(badge);
+    tr.appendChild(tdAvis);
+    tbody.appendChild(tr);
+  }
+  const resume = document.getElementById('resume');
+  if (meilleure) {
+    const moyenne = prev.reduce((a, p) => a + p.score, 0) / prev.length;
+    resume.innerHTML = `
+      <div class="carte"><div>Meilleure session prévue</div><div class="valeur">${fmtHeure(meilleure.horodate)} — ${meilleure.avis} (${Math.round(meilleure.score)}/100)</div></div>
+      <div class="carte"><div>Score moyen sur la période</div><div class="valeur">${moyenne.toFixed(0)}/100</div></div>
+      <div class="carte"><div>Vagues max</div><div class="valeur">${fmt(Math.max(...prev.map(p => p.hauteur_vagues_m ?? 0)))} m</div></div>`;
+  }
+}
+
+selectSpot.addEventListener('change', chargerPrevisions);
+selectJours.addEventListener('change', chargerPrevisions);
+document.getElementById('rafraichir').addEventListener('click', chargerPrevisions);
+chargerSpots().then(chargerPrevisions);
+</script>
+</body>
+</html>

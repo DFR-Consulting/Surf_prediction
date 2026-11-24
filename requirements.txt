@@ -1,0 +1,2 @@
+# Aucune dépendance externe : le projet n'utilise que la bibliothèque standard de Python.
+# Optionnel, pour lancer les tests avec pytest : pip install pytest
