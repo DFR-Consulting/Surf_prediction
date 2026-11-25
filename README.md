@@ -13,7 +13,15 @@ Les données proviennent des API gratuites [Open-Meteo](https://open-meteo.com/)
 
 Aucune dépendance externe : uniquement la bibliothèque standard de Python (≥ 3.10).
 
-## Installation
+## Utilisation
+
+### 🌐 Sans aucune installation : fichier HTML autonome
+
+Ouvrez simplement **`surf.html`** (à la racine du dépôt) en double-cliquant dessus : la page fonctionne seule dans votre navigateur, interroge directement les API Open-Meteo et affiche le tableau des prévisions avec le score 0-100. Aucune installation, aucun serveur, aucune ligne de commande — seule une connexion Internet est requise.
+
+Pour l'obtenir sans Git : sur la page du dépôt, cliquez sur **Code → Download ZIP**, extrayez, puis ouvrez `surf.html`.
+
+### Ligne de commande (base Python)
 
 ```bash
 git clone https://github.com/DFR-Consulting/Surf_prediction.git
@@ -89,7 +97,7 @@ Pour ajouter un spot : dictionnaire `SPOTS` dans `src/surf_prediction/spots.py` 
 python -m unittest discover -s tests -v   # ou simplement : pytest
 ```
 
-Les tests n'appellent pas le réseau : le transport HTTP est remplacé par un faux transport.
+Les tests n'appellent pas le réseau : le transport HTTP est remplacé par un faux transport. Le test de `surf.html` vérifie le JavaScript du score via Node (`tests/scoring_check.js`) s'il est installé, sinon il est ignoré.
 
 ## Structure du projet
 
@@ -101,8 +109,9 @@ src/surf_prediction/
 ├── providers/open_meteo.py    # client API Open-Meteo (Marine + Forecast)
 ├── cli.py                     # ligne de commande
 ├── api.py                     # serveur HTTP (stdlib) + endpoints JSON
-└── web/index.html             # page de visualisation
-tests/                         # tests unitaires (unittest / pytest)
+└── web/index.html             # page de visualisation (via l'API locale)
+surf.html                      # page autonome (zéro installation, API appelées depuis le navigateur)
+tests/                         # tests unitaires (unittest / pytest) + test JS du scoring de surf.html
 ```
 
 ## Limites

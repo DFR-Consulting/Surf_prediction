@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prédicteur de surf — autonome</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #0b2239; color: #eaf2f8; }
+  header { padding: 1.2rem 1.5rem; background: #0e3a5d; }
+  header h1 { margin: 0; font-size: 1.4rem; }
+  header p { margin: 0.3rem 0 0; font-size: 0.85rem; opacity: 0.85; }
+  main { padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
+  .controles { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin-bottom: 1rem; }
+  label { display: block; font-size: 0.8rem; opacity: 0.8; margin-bottom: 0.25rem; }
+  select, button { font-size: 1rem; padding: 0.4rem 0.6rem; border-radius: 6px; border: 1px solid #3a6ea5; background: #12395c; color: inherit; }
+  button { cursor: pointer; background: #1d6fa5; border: none; font-weight: 600; }
+  button:hover { background: #2a86c4; }
+  #resume { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .carte { background: #12395c; border-radius: 8px; padding: 0.8rem 1.2rem; }
+  .carte .valeur { font-size: 1.3rem; font-weight: 700; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  th, td { padding: 0.35rem 0.5rem; text-align: right; border-bottom: 1px solid #1d4a73; white-space: nowrap; }
+  th:first-child, td:first-child, th:last-child, td:last-child { text-align: left; }
+  th { background: #0e3a5d; position: sticky; top: 0; }
+  tr.meilleure { background: #14532d; }
+  .badge { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-weight: 600; font-size: 0.78rem; }
+  .Excellent { background: #15803d; }
+  .Bon { background: #4d7c0f; }
+  .Moyen { background: #a16207; }
+  .Mauvais { background: #b91c1c; }
+  .Très { background: #7f1d1d; }
+  #erreur { color: #fca5a5; margin-bottom: 1rem; white-space: pre-wrap; }
+  footer { padding: 1rem 1.5rem; font-size: 0.78rem; opacity: 0.7; }
+  a { color: #7dd3fc; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌊 Prédicteur de qualité de surf</h1>
+  <p>Fichier autonome : aucune installation requise, double-cliquez pour ouvrir. Connexion Internet requise (données Open-Meteo en direct).</p>
+</header>
+<main>
+  <div class="controles">
+    <div><label for="spot">Spot</label><select id="spot"></select></div>
+    <div><label for="jours">Jours de prévision</label>
+      <select id="jours">
+        <option>1</option><option>2</option><option selected>3</option>
+        <option>4</option><option>5</option><option>6</option><option>7</option>
+      </select>
+    </div>
+    <button id="rafraichir">Rafraîchir</button>
+  </div>
+  <div id="erreur"></div>
+  <div id="resume"></div>
+  <table id="table">
+    <thead><tr>
+      <th>Heure</th><th>Vagues (m)</th><th>Période (s)</th><th>Dir. vagues</th><th>Houle (m)</th>
+      <th>Vent (km/h)</th><th>Rafales</th><th>Dir. vent</th><th>Air (°C)</th><th>Eau (°C)</th>
+      <th>Pression (hPa)</th><th>Score</th><th>Avis</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</main>
+<footer>Données : <a href="https://open-meteo.com/">Open-Meteo</a> (licence CC BY 4.0). Prévisions limitées à 7 jours. Score 0-100 : hauteur 30 %, période 25 %, vent 25 %, thermique 10 %, pression 10 %.</footer>
+<script id="logique">
+const SPOTS = [
+  {cle: "biarritz", nom: "Biarritz — Grande Plage", latitude: 43.4832, longitude: -1.5586, orientation_deg: 300},
+  {cle: "anglet", nom: "Anglet — Les Cavaliers", latitude: 43.5203, longitude: -1.5117, orientation_deg: 300},
+  {cle: "hossegor", nom: "Hossegor — La Gravière", latitude: 43.6628, longitude: -1.4414, orientation_deg: 285},
+  {cle: "guethary", nom: "Guéthary", latitude: 43.4256, longitude: -1.6061, orientation_deg: 290},
+  {cle: "lacanau", nom: "Lacanau — Océan", latitude: 44.9778, longitude: -1.0752, orientation_deg: 280},
+  {cle: "nazare", nom: "Nazaré — Praia do Norte (Portugal)", latitude: 39.6029, longitude: -9.0703, orientation_deg: 270},
+  {cle: "pipeline", nom: "Pipeline — North Shore, Oahu (Hawaï)", latitude: 21.6659, longitude: -158.0537, orientation_deg: 355},
+];
+
+const POIDS = { hauteur: 0.30, periode: 0.25, vent: 0.25, thermique: 0.10, pression: 0.10 };
+
+const SEUILS_AVIS = [[80, "Excellent"], [60, "Bon"], [40, "Moyen"], [20, "Mauvais"], [0, "Très mauvais"]];
+
+const POINTS_HAUTEUR = [[0,5],[0.3,25],[0.8,80],[1.5,100],[2.5,90],[3.5,55],[5,20],[8,5]];
+const POINTS_PERIODE = [[0,10],[3,30],[5,55],[7,78],[9,92],[12,100],[20,100]];
+const POINTS_VENT = [[0,100],[10,95],[20,75],[30,55],[40,35],[60,15]];
+const POINTS_T_AIR = [[0,20],[10,45],[15,70],[20,90],[24,100],[28,95],[32,70],[40,40]];
+const POINTS_T_EAU = [[0,20],[10,35],[14,60],[18,90],[22,100],[26,90],[30,60]];
+const POINTS_PRESSION = [[992,45],[1000,65],[1008,80],[1016,90],[1024,97],[1032,100]];
+
+function bornes(v) { return Math.min(100, Math.max(0, v)); }
+
+function interpole(x, points) {
+  if (x <= points[0][0]) return points[0][1];
+  if (x >= points[points.length - 1][0]) return points[points.length - 1][1];
+  for (let i = 0; i < points.length - 1; i++) {
+    const [x0, y0] = points[i], [x1, y1] = points[i + 1];
+    if (x0 <= x && x <= x1) {
+      if (x1 === x0) return y0;
+      return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+    }
+  }
+  return points[points.length - 1][1];
+}
+
+function scoreHauteur(h) { return bornes(interpole(h, POINTS_HAUTEUR)); }
+function scorePeriode(p) { return bornes(interpole(p, POINTS_PERIODE)); }
+
+function ecartAngulaire(a, b) {
+  const d = Math.abs((a - b) % 360);
+  return Math.min(d, 360 - d);
+}
+
+function scoreVent(vitesse, direction, orientation) {
+  let s = interpole(vitesse, POINTS_VENT);
+  if (direction !== null && direction !== undefined && orientation !== null && orientation !== undefined) {
+    const d = ecartAngulaire(direction, orientation);
+    if (d <= 45) s -= 25;
+    else if (d >= 135) s += 5;
+    else s -= 8;
+  }
+  return bornes(s);
+}
+
+function scoreThermique(tAir, tEau) {
+  const s = [];
+  if (tAir !== null && tAir !== undefined) s.push(interpole(tAir, POINTS_T_AIR));
+  if (tEau !== null && tEau !== undefined) s.push(interpole(tEau, POINTS_T_EAU));
+  if (!s.length) return null;
+  return s.reduce((a, b) => a + b, 0) / s.length;
+}
+
+function scorePression(p) { return bornes(interpole(p, POINTS_PRESSION)); }
+
+function avisPour(score) {
+  for (const [seuil, avis] of SEUILS_AVIS) if (score >= seuil) return avis;
+  return SEUILS_AVIS[SEUILS_AVIS.length - 1][1];
+}
+
+function evaluer(p, spot) {
+  const comp = [];
+  if (p.hauteur_vagues_m != null) comp.push([POIDS.hauteur, scoreHauteur(p.hauteur_vagues_m)]);
+  if (p.periode_vagues_s != null) comp.push([POIDS.periode, scorePeriode(p.periode_vagues_s)]);
+  if (p.vent_vitesse_kmh != null) comp.push([POIDS.vent, scoreVent(p.vent_vitesse_kmh, p.vent_direction_deg, spot.orientation_deg)]);
+  const th = scoreThermique(p.temperature_air_c, p.temperature_eau_c);
+  if (th !== null) comp.push([POIDS.thermique, th]);
+  if (p.pression_hpa != null) comp.push([POIDS.pression, scorePression(p.pression_hpa)]);
+  if (!comp.length) return 0;
+  const totalPoids = comp.reduce((a, [w]) => a + w, 0);
+  return comp.reduce((a, [w, s]) => a + w * s, 0) / totalPoids;
+}
+
+function annoter(p, spot) {
+  p.score = Math.round(evaluer(p, spot) * 10) / 10;
+  p.avis = avisPour(p.score);
+  return p;
+}
+</script>
+<script>
+const HOURLY_MARINE = "wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_direction,swell_wave_period,wind_wave_height,wind_wave_direction,wind_wave_period,sea_surface_temperature";
+const HOURLY_METEO = "temperature_2m,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m";
+
+const selectSpot = document.getElementById('spot');
+const selectJours = document.getElementById('jours');
+
+for (const s of SPOTS) {
+  const opt = document.createElement('option');
+  opt.value = s.cle; opt.textContent = s.nom;
+  selectSpot.appendChild(opt);
+}
+
+function get(horaire, cle, i) {
+  const v = horaire[cle];
+  if (!v || i >= v.length || v[i] === null) return null;
+  return v[i];
+}
+
+async function chargerPrevisions() {
+  document.getElementById('erreur').textContent = '';
+  const spot = SPOTS.find(s => s.cle === selectSpot.value) || SPOTS[0];
+  const jours = selectJours.value;
+  const base = { latitude: spot.latitude, longitude: spot.longitude, forecast_days: jours, timezone: "auto" };
+  const urlMarine = "https://marine-api.open-meteo.com/v1/marine?" + new URLSearchParams({ ...base, hourly: HOURLY_MARINE });
+  const urlMeteo = "https://api.open-meteo.com/v1/forecast?" + new URLSearchParams({ ...base, hourly: HOURLY_METEO, wind_speed_unit: "kmh" });
+  let marine, meteo;
+  try {
+    const reponses = await Promise.all([fetch(urlMarine), fetch(urlMeteo)]);
+    for (const r of reponses) if (!r.ok) throw new Error("HTTP " + r.status);
+    [marine, meteo] = await Promise.all(reponses.map(r => r.json()));
+  } catch (e) {
+    document.getElementById('erreur').textContent = "Impossible de récupérer les prévisions Open-Meteo : " + e.message + "\nVérifiez votre connexion Internet, puis cliquez sur Rafraîchir.";
+    return;
+  }
+  const hm = marine.hourly || {};
+  const hp = meteo.hourly || {};
+  const parHeure = {};
+  (hm.time || []).forEach((t, i) => {
+    parHeure[t] = {
+      horodate: t,
+      hauteur_vagues_m: get(hm, "wave_height", i),
+      periode_vagues_s: get(hm, "wave_period", i),
+      direction_vagues_deg: get(hm, "wave_direction", i),
+      hauteur_houle_m: get(hm, "swell_wave_height", i),
+      periode_houle_s: get(hm, "swell_wave_period", i),
+      hauteur_vagues_vent_m: get(hm, "wind_wave_height", i),
+      temperature_eau_c: get(hm, "sea_surface_temperature", i),
+    };
+  });
+  (hp.time || []).forEach((t, i) => {
+    const p = parHeure[t];
+    if (!p) return;
+    p.temperature_air_c = get(hp, "temperature_2m", i);
+    p.pression_hpa = get(hp, "surface_pressure", i);
+    p.vent_vitesse_kmh = get(hp, "wind_speed_10m", i);
+    p.vent_direction_deg = get(hp, "wind_direction_10m", i);
+    p.vent_rafales_kmh = get(hp, "wind_gusts_10m", i);
+  });
+  const previsions = Object.keys(parHeure).sort().map(t => annoter(parHeure[t], spot));
+
+  const tbody = document.querySelector('#table tbody');
+  tbody.innerHTML = '';
+  let meilleure = null;
+  for (const p of previsions) {
+    if (!meilleure || p.score > meilleure.score) meilleure = p;
+    const tr = document.createElement('tr');
+    if (p === meilleure && p.score >= 60) tr.className = 'meilleure';
+    const cellules = [
+      fmtHeure(p.horodate), fmt(p.hauteur_vagues_m), fmt(p.periode_vagues_s), fmtDir(p.direction_vagues_deg),
+      fmt(p.hauteur_houle_m), fmt(p.vent_vitesse_kmh), fmt(p.vent_rafales_kmh), fmtDir(p.vent_direction_deg),
+      fmt(p.temperature_air_c), fmt(p.temperature_eau_c), fmt(p.pression_hpa, 0), Math.round(p.score),
+    ];
+    for (const c of cellules) { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); }
+    const tdAvis = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + p.avis.split(' ')[0];
+    badge.textContent = p.avis;
+    tdAvis.appendChild(badge);
+    tr.appendChild(tdAvis);
+    tbody.appendChild(tr);
+  }
+  const resume = document.getElementById('resume');
+  if (meilleure) {
+    const moyenne = previsions.reduce((a, p) => a + p.score, 0) / previsions.length;
+    const maxVagues = Math.max(...previsions.map(p => p.hauteur_vagues_m ?? 0));
+    resume.innerHTML =
+      '<div class="carte"><div>Meilleure session prévue</div><div class="valeur">' + fmtHeure(meilleure.horodate) + ' — ' + meilleure.avis + ' (' + Math.round(meilleure.score) + '/100)</div></div>' +
+      '<div class="carte"><div>Score moyen sur la période</div><div class="valeur">' + moyenne.toFixed(0) + '/100</div></div>' +
+      '<div class="carte"><div>Vagues max</div><div class="valeur">' + fmt(maxVagues) + ' m</div></div>';
+  }
+}
+
+function fmt(v, d = 1) { return v === null || v === undefined ? '—' : Number(v).toFixed(d); }
+function fmtDir(v) { return v === null || v === undefined ? '—' : Math.round(v) + '°'; }
+function fmtHeure(iso) {
+  const dt = new Date(iso);
+  return isNaN(dt) ? iso : dt.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '');
+}
+
+selectSpot.addEventListener('change', chargerPrevisions);
+selectJours.addEventListener('change', chargerPrevisions);
+document.getElementById('rafraichir').addEventListener('click', chargerPrevisions);
+chargerPrevisions();
+</script>
+</body>
+</html>
